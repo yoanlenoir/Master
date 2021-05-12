@@ -1,0 +1,429 @@
+---
+title: "Projet"
+author: "Corre, Lenoir"
+date: ""
+lang: fr
+output: 
+ pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes 
+ rmdformats::readthedown:
+   gallery: no
+   highlight: tango
+   lightbox: yes
+   self_contained: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, echo = FALSE, cache=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.height = 5.5, fig.width = 12, 
+                      sanitize = TRUE, echo = FALSE, cache = FALSE)
+```
+
+```{r}
+library(haven)
+library(stargazer)
+library(AER)
+library(VGAM)
+library(GGally)
+library(magrittr)
+library(e1071)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(foreign)
+library(plm)
+library(kableExtra)
+library(data.table)
+library(gplots)
+```
+
+```{r kable_plus}
+tab_fun <- function(tab, above = FALSE, title = title, font_size = 10, header = NULL){
+  if(above){
+    tab %>% kable(caption = title) %>%
+    kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                  latex_options = c("HOLD_position", "striped"), position = "center") %>%
+    add_header_above(header = header, bold=TRUE, color="red")%>%
+    column_spec(1, bold=T) %>%
+    row_spec(0, bold=T)
+  } else {
+    tab %>% kable(caption = title) %>%
+      kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                    latex_options = c("HOLD_position", "striped"), position = "center") %>%
+      column_spec(1, bold=T) %>%
+      row_spec(0, bold=T)
+  }
+}
+```
+
+\newpage
+
+# Importation des données
+
+```{r}
+data<-read_dta("SANTE.dta")
+tot_NA<-sum(is.na(data))
+tab2 <- cbind(tot_NA)
+colnames(tab2) <- c("NA")
+rownames(tab2)<-c("Data SANTE")
+
+tab2 %>% tab_fun(title = "Nombre de valeurs manquantes")
+```
+
+Nous allons travailler sur une base de données de 200 individus sur 5 années ce qui nous fait 1000 observations. Nous avons également 6 variables et aucunes données manquantes. Tout d'abord nous allons determiner la structure de panel :  
+
+```{r}
+panel<-data[complete.cases(data),]
+pdim(panel)
+```
+
+On a bien un panel cylindré de 200 individus observés sur 5 périodes.
+Nous avons donc un T faible et un nombre d'individus assez important ce qui signifie que l'on est en présence d'un panel court et cylindré.
+
+Ensuite, voici une sommaire des vairables quantitatives.
+
+```{r}
+data2<-data[,c(3,4,5)]
+summary1<-sapply(data2, is.numeric)
+T1=data2[,summary1] 
+f<-function(T1) c(Min=round(min(T1),2),Max=round(max(T1),2),
+                  Moyenne=round(mean(T1),2),Mediane=round(median(T1),2),
+                  Ecart.type=round(sd(T1),2))
+sum1<-setDT(T1)[,sapply(.SD, f)]
+sum1 %>% tab_fun( title = "Sommaire des variables quantitatives")
+
+```
+
+On voit que pour chaque variables, la médiane et la moyenne sont assez proche : 
+
+- Pour les dépenses de santé, on peut observer une moyenne autour de 500$ par an. 
+
+- Pour le revenu, elle est de l'ordre de 74 000$ par an 
+
+- Et enfin, pour l'âge, elle se situe vers 47 ans. 
+
+Enfin, le modèle que nous allons étudié est le suivant : 
+$$DEPSANTE_{it}=\beta_{1i}+\beta_2ln(REV_{it})+\beta_3 AGE_{it}+\beta_4 AGE^2_{it}+ \beta_5 ASSU_{it}+\varepsilon_{it} $$
+
+# Question 1
+
+```{r}
+data$lrev<-log(data$REV)
+```
+
+Il est plus intéressant d'utiliser le logarithme du revenu car le revenu est donné en milliers de dollars et les dépenses de santé en centaines de dollars. En utilisant le log on corrige cela, en quelque sorte on "lisse" les données. Cela permet que les valeurs extrêmes n'impactent pas trop la régression.
+
+Nous aurons donc un modèle Niveau-log ce qui veut dire que, toutes choses égales par ailleurs, si le revenu augmente de 1%, une approximation de l'effet marginal du revenu sur les dépenses liées à la santé est de $\frac{\beta_2}{100}$%.
+
+# Question 2
+
+```{r}
+data$agecarre<-data$AGE^2
+```
+
+
+```{r}
+MCOAGE <- lm(DEPSANTE ~ AGE, data = data)
+MCOAGECARRE <- lm(DEPSANTE ~ AGE + agecarre, data = data)
+
+plot(data$AGE,data$DEPSANTE,xlab="Âge en années",ylab="DEPSANTE")
+
+abline(a = coef(MCOAGE)[1], b = coef(MCOAGE)[2],col="red")
+curve(coef(MCOAGECARRE)[1] + coef(MCOAGECARRE)[2]*x + coef(MCOAGECARRE)[3]*x^2, add=TRUE,col="blue")
+
+legend(19, 13.5, legend=c("age", "age+age^2"),
+       col=c("red", "blue"), lty=1:2,cex = 0.9)
+
+title(main="Prédiction avec AGE et AGECARRE")
+```
+
+
+L'interêt de mettre également la variable AGE au carré est de prendre en compte la non linéarité. Si l'on compare les deux courbes du graphique précèdent, on peut voir que si l'on prend en compte l'âge au carré, la régression semble beaucoup mieux représenter les données entre la variable explicative et la variable expliqué. 
+
+Mettre l'âge au carré va nous permettre d'augmenter le $R^2$ et donc la qualité de notre régression.La variable "age^2" nous montre comment évolue les dépenses de santé par rapport à la convexité de la variable âge. Pour pouvoir interpréter le coefficient associé à cette variable, il faut que celui-ci soit significatif (p<0.05). Si celui-ci est positif, l'âge au carré décrit une courbe convexe, si il est négatif la courbe sera concave. 
+Pour déterminer le minimum ou le maximum de la fonction $age^2$, il faut faire le calcul suivant: 
+$$\frac{-\beta_1}{2\beta_2}$$ où $\beta_1$ est le coefficient associé à l'âge et $\beta_2$ le coefficient associé à l'âge^2. 
+
+
+# Question 3
+
+```{r}
+data$ASSU<-as.factor(data$ASSU)
+```
+
+La variable ASSU est mise en variable dummy. 
+Donc l'écriture de ce modèle varie selon cette variable :
+
+Si $ASSU=0$ alors :
+$$DEPSANTE_{it}=\beta_{1i}+\beta_2ln(REV_{it})+\beta_3 AGE_{it}+\beta_4 AGE^2_{it}+\varepsilon_{it} $$
+Si $ASSU=1$ alors : 
+$$DEPSANTE_{it}=\beta_{1i}+\beta_{5i}+\beta_2ln(REV_{it})+\beta_3 AGE_{it}+\beta_4 AGE^2_{it}++\varepsilon_{it} $$
+\newpage
+
+## MCO
+
+Voici les résultats pour l'éstimation par les MCO :
+
+```{r}
+MCO<-lm(DEPSANTE ~ lrev + AGE  + agecarre + ASSU, data = data)
+# ou encore en utilisant plm 
+MCO_plm<-plm(DEPSANTE ~ lrev + AGE  + agecarre + ASSU, data = data,model ="pooling")
+stargazer(MCO,type="text")
+#vif(MCO) # multicolinéarité sur âge ==> Logique
+```
+
+Ici, on peut voir que le logarithme du revenu n'est pas significatif au seuil 5%. Le coefficient est positif donc si le revenu augmente de 1%, les dépenses de santé augmentent de $\frac{0.392}{100}=0,04\%$
+
+On peut constater que le coefficient associé à l'âge  est négatif et celui de l'âge au carré positif donc nous constatons que l'âge au carré est convexe. Donc les dépenses de santé diminuent jusqu'à son minimum situé en $\frac{-\beta_3}{2\beta_4}=\frac{0.208}{0.008}=26$. A partir de cet âge, les dépenses de santé augmentent plus une personne vieillit. 
+
+On constate que le coefficient associé à l'assurance maladie est positif, ce qui signifie que si l'individu est assuré ses dépenses de santé vont augmenter. En effet, la constante est de $\beta_1+\beta_5 = 4,956$ si l'individu est assuré contre $\beta_1 = 3,439$ s'il ne l'est pas. 
+
+## Effets fixes individuels
+
+Le modèle à estimer est :
+$$DEPSANTE_{it}-\overline{DEPSANTE}_{i} =\beta_2 (ln(Rev_{it})-\overline{ln(Rev}_{i}))+\beta_3 (AGE_{it}-\overline{AGE}_{i})+\beta_4 (AGE^2_{it}-\overline{AGE^2}_{i})+$$
+$$\beta_5 (ASSU_{it}-\overline{ASSU}_{i})+(\varepsilon_{it}-\overline{\varepsilon}_{i}) \quad i =1,...,N; \quad t =1,...,T $$
+
+
+```{r}
+within<-plm(DEPSANTE ~ lrev + AGE + I(AGE^2) + ASSU, data = data, model="within")
+```
+
+Testons si il y a présence d'autocorrélation et d'héteroscédasticité dans le modèle : 
+
+```{r}
+pwartest(within)#Il y a autocorrelation
+bptest(within)# Il y a de l'hétéroscédasticité.
+```
+
+Pour l'autocorrélation, la p-value est > 0.05 donc on rejette l'hypothèse alternative d' autocorrélation.
+Pour l'hétéroscédasticité, la p-value est < 0.05 donc on conserve l'hypothèse de présence d'hétéroscédaticité.
+
+Nous allons donc corriger l'hétéroscédasticité et présenter les résultats en utilisant un estimateur à effets fixes individuels :
+
+```{r}
+a<-coeftest(within, vcovHC(within,type="HC3"))
+stargazer(within,a,type="text")
+```
+
+En corrigeant le modèle, les coefficients ne changent pas, seuls les écarts-type se modifient. 
+
+Dans ce modèle, le logarithme du revenu n'est pas significatif et son coefficient est négatif.
+En ce qui concerne l'âge, les deux coefficients sont positifs donc si l'âge augmente, les dépenses augmentent de plus en plus. Toutefois ces variables ne sont pas significatives, même au seuil 10%.
+
+On peut en conclure également que les personnes ayant une assurance maladie dépensent plus dans la santé qu'une personne qui n'ayant pas d'assurance maladie. De plus cette variable est très significative.
+
+## Effets aléatoires
+
+Le modèle à estimer s'écrit :
+$$DEPSANTE_{mcqgit}=\beta_1+\beta_2 ln(Rev_{mcqgit})+\beta_3 AGE_{mcqgit}+\beta_4 AGE^2_{mcqgit}+\beta_5 ASSU_{mcqgit}+v_{it} \quad i =1,...,N; \quad t =1,...,T $$
+$DEPSANTE_{mcqgit}=DEPSANTE_{it}-\hat{\theta}\overline{DEPSANTE}_{i}$ ;
+
+$AGE_{mcqgit}=AGE_{it}-\hat{\theta}\overline{AGE}_{i}$ ; 
+
+$AGE^2_{mcqgit}=AGE^2_{it}-\hat{\theta}\overline{AGE^2}_{i}$ ; 
+
+$ln(Rev_{mcqgit})=ln(Rev_{it})-\hat{\theta}\overline{ln(Rev}_{3i})$ ;
+
+$ASSU_{mcqgit}=ASSU_{it}-\hat{\theta}\overline{ASSU}_{i}$ 
+
+avec
+
+$\hat{\theta}=1-\sqrt{\frac{\sigma_{\varepsilon}^{2}}{(\sigma_{\varepsilon}^{2}+T\sigma_{\mu}^{2})}}$.
+```{r}
+random<-plm(DEPSANTE ~ lrev + AGE + I(AGE^2) + ASSU, data = data, model="random")
+```
+
+Nous testons tout d'abord la présence d'hétéroscédasticité : 
+
+```{r}
+bptest(random)
+```
+
+Nous sommes en présence d'hétéroscédasticité (p-value < 0.05), nous allons donc corriger cela et présenter les résultats pour un estimateur à effets aléatoires :  
+
+```{r}
+b<-coeftest(random, vcovHC)
+stargazer(random,b,type="text")
+```
+
+Le logarithme du revenu n'est pas significatif même au seuil 10%.
+On remarque que les coefficients sont du même signe que dans notre MCO, celui de l'âge est négatif, l'âge au carré positif. Donc les dépenses de santé diminuent jusqu'à son minimum situé en $\frac{-\beta_3}{2\beta_4}=\frac{0.090}{0.004}=22,5$. A partir de cet âge, les dépenses de santé augmentent plus une personne vieillit. 
+
+De plus, le coefficient associé à l'assurance maladie est positif donc les dépenses augmentent si les individus possède cette assurance. 
+Grâce à la correction de l'hétéroscédasticité, le coefficient de l'âge devient significatif à 5%. 
+
+
+# Question 4
+
+Pour tester l'hypothèse des termes constants, il faut utiliser le modèle MCO et le modèle à effets fixes individuels. 
+
+L'hypothèse $H_0$ est donc $$H_0: \alpha_i=\alpha \quad \forall_i \in[1;N]$$
+
+Pour ceci, nous allons utiliser la statistique de Fisher : 
+$$F=\frac{(SCR_{c1}-SCR_{c2})/ (N-1)}{SCR_{c2}/ N(T-1)-K} \sim F[(N-1), N(T-1)-K]$$
+où $N-1=199$ et $N(T-1)-K=796$
+
+Calculons les sommes des carrées des résidus :
+
+* SCRc1 : la somme des carrés des résidus du modèle contraint en utilisant MCO sur les données empilés
+
+* SCRc2 : somme des carrés des résidus du modèle non contraint en utilisant l'estmiateur à effets individuels (within).
+
+```{r}
+v1<-c(deviance(MCO))
+v2<-c(deviance(within))
+tab<-cbind(v1,v2)
+rownames(tab)<-c("SCR")
+colnames(tab)<-c("MCO","Within")
+
+tab %>% tab_fun(title = "SCR en fonction du modèle")
+```
+
+Calculons la statistique de Fisher et comparons avec celle de la table de loi :
+
+```{r}
+stat_F<-((v1-v2)/199)/(v2/796)
+tab_fisher <- cbind(stat_F)
+colnames(tab_fisher) <- c("Fobs")
+rownames(tab_fisher)<-c("Statistique")
+tab_fisher %>% tab_fun(title = "Statistique de Fisher")
+```
+
+$F_{tab}=F(199,796)=1,2$. 
+Donc $F_{obs}>F_{tab}$ nous pouvons rejetter $H_0$. Les constantes ne sont donc pas égales. On peut juste conclure que le modèle "pooled" estimé par les MCO n'est pas possible car $\alpha_i \ne \alpha$
+
+# Question 5
+
+```{r}
+ggplot(data, aes(y=DEPSANTE,x=lrev))+
+  geom_point(size=1)+
+  labs(title="Dépense de santé en fonction du revenu",y="Depense de sante",x="log rev")+
+  scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+  geom_smooth(method="lm")
+```
+
+Sur le graphique, nous pouvons voir que plus le revenu augmente, plus les dépenses de santé semblent augmenter mais légèrement.
+
+Pour les modèles à effets fixes individuels et effets aléatoires, le coefficient associé au logarithme du revenu est toujours négatif. 
+
+Pour le modèle à effets fixes, le coefficient $\beta$ associé au log du revenu est de -0,105, ce qui signifie que l'augmentation de 1% du revenu va baisser de $\frac{-0,105}{100}=-0,01\%$ les dépenses de santé. Pour le modèle à effets aléatoires, le coefficient $\beta$ associé au log du revenu est de -0,149, ce qui signifie que l'augmentation de 1% du revenu va baisser de $\frac{-0,149}{100}=-0,015\%$ les dépenses de santé. 
+
+Toutefois, le coefficient n'est jamais significatif (même au seuil 10%),ce qui rend l'interprétation impossible.  
+
+Pour les MCO, le coefficient est positif mais non significatif donc si le revenu augmente de 1%, les dépenses de santé augmentent de $\frac{0.392}{100}=0,04\%$. 
+
+Nous avons donc des contradictions entre les différents modèles. Toutefois c'est dans le modèle des MCO que le revenu est le plus significatif avec un coefficient positif, donc une relation croissante entre le revenu et les dépenses de santé.
+
+
+# Question 6
+
+Comparons les résultats entre le modèle à effets individuels et le modèle à effets aléatoires :
+
+```{r}
+stargazer(within, random, type="text")
+```
+
+Le premier modèle (1) est le modèle "within" et le second (2) est "random". 
+
+Nous pouvons voir que :
+
+- Le logarithme du revenu n'est pas significatif dans les deux modèles et le coefficient est négatif.
+
+- L'âge n'est pas signicatif pour le modèle within et significatif au seuil de 10% pour le modèle random. Le coefficient est négatif pour le modèle random et positif pour le modèle within.
+
+- L'âge^2 n'est pas significatif pour le modèle à effets fixes mais significatif et positif pour le modèle à effets aléatoires, ce qui signifie pour les deux modèles que plus l'on vieillit, plus les dépenses de santé augmentent.  
+
+- Pour l'assurance maladie, les coefficients pour les deux modèles sont tous les deux signicatifs, positifs et presque identiques. 
+
+Faisons un test de Hausman pour déterminer quel modèle est la meilleure spécification.
+
+```{r}
+phtest(within, random)
+```
+
+Les hypothèses de ce test sont les suivantes :
+$$H_0: \hat\beta_{inter}-\hat\beta_{MCQG}=0 \rightarrow \text{Modèle aléatoire} $$
+$$H_1: \hat\beta_{inter}-\hat\beta_{MCQG} \ne 0 \rightarrow \text{Modèle à effets fixes} $$
+On rejette l'hypothèse nulle (pvalue < 0.05) donc le modèle à effets aléatoires. Le modèle à effets fixes individuels est la meilleure spécification.
+
+\newpage
+
+# Question 7 
+
+## Effet de l'âge 
+
+```{r}
+stargazer(random,type="text")
+```
+
+Le coefficient de l'âge est négatif ce qui montre que plus un individu est agé, moins ces dépenses de santé vont être élevé. De plus le coefficient de l'âge^2 est positif, ce qui veut dire que plus l'âge augmente, plus les dépenses de santé diminue de plus en plus rapidement. 
+
+Le coefficient de l'âge est négatif mais non significatif au seuil de 5% donc nous allons nous interessé au coefficient de l'âge au carré. Ce coefficient est positif donc cela décrit une courbe convexe qui atteint son minimum en $\frac{-\beta_3}{2\beta_4}=\frac{0.09}{0.004}=22.5$.
+
+Comme notre âge minimum est de 21 et le minimum de la fonction se situe à 22.5 ans, on peut en conclure que plus une personne vieillit, plus les dépenses de santé vont augmenter. 
+
+\newpage
+
+## Effet de l'assurance maladie 
+
+Voici un graphique et un test de moyenne qui représentent l'effet de l'assurance maladie sur les dépenses de santé :
+
+```{r}
+ggplot(data=data)+aes(x=ASSU, y=DEPSANTE)+
+    geom_boxplot(color="blue")+
+    stat_summary(aes(label=..y..),fun = function(x)median(x),
+                 geom="text", size=4, color="red", vjust=-0.9) +
+    stat_summary(fun.y=median, geom="point", shape=18, size=3.5, color="red", fill="red")+ 
+  labs(title = "Dépense de santé en fonction de l'assurance maladie")
+```
+
+```{r}
+moy.test.auto<-function(x,y){
+   test <- t.test(x~ y)
+   output <- c(test$estimate, test$conf.int[1], test$conf.int[2], test$p.value)
+   names(output) <- c(names(test$estimate),"Borne inf. de l'IC à 95% de la diff.","Borne sup. de l'IC à 95% de la diff.", "p-value")
+   return(output)
+ }
+
+moy.test.auto.var<-function(x,y){  if (var.test(x~ y)$p.value < 0.05){
+    test <- t.test(x~ y, var.equal = FALSE)
+  } else {
+    test <- t.test(x~ y, var.equal = TRUE)
+  }
+   output <- c(test$estimate, test$conf.int[1], test$conf.int[2], test$p.value)
+   names(output) <- c("Moyenne hors assurance maladie", "Moyenne assurance maladie","Borne inf. de l'IC à 95% de la diff.","Borne sup. de l'IC à 95% de la diff.", "p-value")
+   return(output)
+ }
+
+moy.test.auto.var.df <- function(df, y){
+  sapply(df, moy.test.auto.var, y)
+}
+
+data %>% select(DEPSANTE) %>%
+  moy.test.auto.var.df(data$ASSU) %>% tab_fun(title = "Test de moyenne sur l'assurance maladie")
+```
+
+Nous pouvons constater que la moyenne des dépenses de santé est 410 euros si l'individu ne possède pas d'assurance maladie contre 570 euros s'il en possède une. 
+Et grâce au test, on peut dire que la différence de moyenne est significative.  
+
+En ce qui conserne les résultats du modèle à effets aléatoires, le fait d'avoir une assurance maladie privée influe sur les dépenses de santé très significativement.
+Si un individu en possède une, les dépenses de santé sont 1,362 fois supérieure aux dépenses pour un individu qui n'en possède pas. 
+
+# Question 8
+
+Dans notre base de données, certains individus changent de statut d'assurance durant les cinq années, la variable est donc variante dans le temps et l'estimateur à effets fixes prend donc en compte cette variable dans le modèle. 
+
+Si les individus ne changent pas de statut d'assurance sur les cinq années alors cette variable est invariante dans le temps. Le modèle à effets fixes individuels (modèle within) n'estime pas ce genre de variable contrairement à un modèle à effets aléatoires. L'estimateur des effets fixes sera donc inefficace. 
+
+
+
+
+
+
+  
+
